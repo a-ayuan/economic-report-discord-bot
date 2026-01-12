@@ -1,24 +1,24 @@
-provider: "fxstreet"   # "fxstreet" or "forexfactory"
-currency: "USD"
-impact: "high"         # maps to "red folder" / highest impact
-keyword_allowlist: []  # if non-empty, only events containing these keywords pass
-keyword_blocklist: []  # events containing these keywords are excluded
-
-calendar_refresh:
-  weekly_sunday_hour: 0
-  weekly_sunday_minute: 0
-  daily_hour: 0
-  daily_minute: 0
-  periodic_minutes: 30
-
-polling:
-  window_seconds: 300
-  phase1_seconds: 30
-  phase1_interval: 2
-  phase2_seconds: 120
-  phase2_interval: 5
-  phase3_seconds: 300
-  phase3_interval: 15
+timezone: "America/New_York"
 
 discord:
-  message_template: "**{title}** | Forecast: `{forecast}` | Previous: `{previous}` | Actual: `{actual}`"
+  token_env: "DISCORD_TOKEN"
+  channel_id_env: "NEWS_CHANNEL_ID"
+  command_channel_id_env: "COMMAND_CHANNEL_ID"
+
+scrape:
+  calendar_url: "https://www.myfxbook.com/forex-economic-calendar"
+  calendar_poll_seconds: 1800          # 30 min
+  calendar_poll_jitter_seconds: 20
+
+  # watcher behavior
+  prefetch_seconds: 10                 # start warming up a little before release time
+  burst_seconds: 45                    # aggressive polling window
+  burst_interval_seconds: 2            # 2s during burst
+  max_watch_seconds: 180               # total time to watch closely after release time
+  backoff_steps_seconds: [3, 5, 10, 15]
+  delayed_check_seconds: 60            # after max_watch, check once per minute
+  delayed_max_seconds: 1800            # give up after 30 minutes
+
+filters:
+  currency: "USD"
+  impact: "High"                       # High = “red” equivalent

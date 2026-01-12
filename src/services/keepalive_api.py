@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from fastapi import FastAPI
 
-def create_app() -> FastAPI:
+def make_app() -> FastAPI:
     app = FastAPI()
 
     @app.get("/health")
-    async def health():
+    def health():
         return {"ok": True}
 
     return app
