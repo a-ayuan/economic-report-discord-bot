@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 class EconDiscordBot(commands.Bot):
     def __init__(self, *, settings: AppSettings) -> None:
-        intents = discord.Intents.default()
+        intents = discord.Intents.default(); intents.message_content = True
         # If you later want message-content parsing for more advanced commands,
         # you may need Message Content intent enabled in Discord Developer Portal.
         super().__init__(command_prefix="!", intents=intents)
