@@ -6,10 +6,10 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from bot.cache import CacheState
-from bot.models import EconEvent
-from bot.providers.base import EconProvider
-from bot.utils.time import now_tz
+from src.bot.cache import CacheState
+from src.bot.models import EconEvent
+from src.bot.providers.base import EconProvider
+from src.bot.utils.time import now_tz
 
 log = logging.getLogger(__name__)
 

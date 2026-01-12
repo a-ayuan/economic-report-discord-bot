@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Iterable
 
-from bot.models import EconEvent
+from src.bot.models import EconEvent
 
 class EconProvider(ABC):
     @abstractmethod

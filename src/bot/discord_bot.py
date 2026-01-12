@@ -6,11 +6,11 @@ from zoneinfo import ZoneInfo
 
 import discord
 
-from bot.cache import CacheState
-from bot.providers import FXStreetProvider, ForexFactoryProvider
-from bot.providers.base import EconProvider
-from bot.scheduler import EventScheduler
-from bot.config import AppSettings
+from src.bot.cache import CacheState
+from src.bot.providers import FXStreetProvider, ForexFactoryProvider
+from src.bot.providers.base import EconProvider
+from src.bot.scheduler import EventScheduler
+from src.bot.config import AppSettings
 
 log = logging.getLogger(__name__)
 

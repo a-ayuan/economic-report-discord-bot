@@ -5,9 +5,9 @@ from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 
-from bot.models import EconEvent
-from bot.providers.base import EconProvider
-from bot.utils.http import get_session
+from src.bot.models import EconEvent
+from src.bot.providers.base import EconProvider
+from src.bot.utils.http import get_session
 
 log = logging.getLogger(__name__)
 

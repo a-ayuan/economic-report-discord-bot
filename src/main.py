@@ -3,10 +3,10 @@ import os
 
 import uvicorn
 
-from bot.config import AppSettings
-from bot.discord_bot import EconDiscordBot
-from bot.log import setup_logging
-from bot.web.health import create_app
+from src.bot.config import AppSettings
+from src.bot.discord_bot import EconDiscordBot
+from src.bot.log import setup_logging
+from src.bot.web.health import create_app
 
 async def run_bot(settings: AppSettings) -> None:
     bot = EconDiscordBot(settings=settings)
