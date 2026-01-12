@@ -11,7 +11,6 @@ from src.bot.utils.http import get_session
 
 log = logging.getLogger(__name__)
 
-
 class FXStreetProvider(EconProvider):
     """
     Scrapes FXStreet US calendar page.

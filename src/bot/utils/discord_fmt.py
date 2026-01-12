@@ -1,60 +1,64 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
-from typing import Iterable
-from zoneinfo import ZoneInfo
 
-from src.bot.models import EconEvent
+from src.bot.providers.myfxbook import CalendarEvent
 
 DISCORD_MAX_LEN = 2000
 
-def _val_or_pending(actual: str | None) -> str:
-    if actual is None or actual.strip() == "" or actual.strip().lower() in {"-", "n/a"}:
-        return "PENDING"
-    return actual.strip()
+def format_week_calendar(events: list[CalendarEvent]) -> str:
+    if not events:
+        return "**This week:** no matching events found."
 
-def _val_or_na(v: str | None) -> str:
-    if v is None or v.strip() == "" or v.strip().lower() in {"-", "pending"}:
-        return "N/A"
-    return v.strip()
+    by_day: dict[str, list[CalendarEvent]] = defaultdict(list)
+    for ev in events:
+        day_name = ev.dt_ny.strftime("%A")
+        by_day[day_name].append(ev)
 
-def format_week_calendar(events: Iterable[EconEvent], tz_name: str) -> str:
-    tz = ZoneInfo(tz_name)
-    grouped: dict[str, list[EconEvent]] = defaultdict(list)
+    # Fixed weekday order
+    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-    # group by weekday name
-    for e in events:
-        wd = e.release_dt.astimezone(tz).strftime("%A")
-        grouped[wd].append(e)
-
-    # order weekdays
-    ordered_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-    # sort within day by time
-    for day in ordered_days:
-        grouped[day].sort(key=lambda x: x.release_dt)
-
-    lines: list[str] = []
-    lines.append("**This Week (USD, High Impact)**")
-
-    for day in ordered_days:
-        day_events = grouped.get(day, [])
-        lines.append(f"\n__**{day}**__")
+    lines: list[str] = ["**This Week (High impact, USD):**"]
+    for day in order:
+        day_events = by_day.get(day, [])
         if not day_events:
-            lines.append("- no news")
+            lines.append(f"\n**{day}:** no news")
             continue
 
-        for e in day_events:
-            t = e.release_dt.astimezone(tz).strftime("%-I:%M %p %Z")
-            actual = _val_or_pending(e.actual)
-            forecast = _val_or_na(e.forecast)
-            previous = _val_or_na(e.previous)
+        lines.append(f"\n**{day}:**")
+        for ev in day_events:
+            t = ev.dt_ny.strftime("%-I:%M %p ET") if hasattr(ev.dt_ny, "strftime") else ""
+            actual = ev.actual if ev.actual else "PENDING"
+            forecast = ev.forecast if ev.forecast else "N/A"
+            prev = ev.previous if ev.previous else "N/A"
+
             lines.append(
-                f"- **{t}**: {e.title}; Actual: `{actual}`; Forecast: `{forecast}`; Previous: `{previous}`"
+                f"- **{t}**: {ev.title}; "
+                f"Actual: **{actual}**; Forecast: **{forecast}**; Previous: **{prev}**"
             )
 
-    return "\n".join(lines).strip()
+    # Discord safety: keep under 2000 chars. If needed, trim.
+    msg = "\n".join(lines)
+    if len(msg) <= 1900:
+        return msg
+
+    # If too long, keep only first N events per day until fits
+    trimmed: list[str] = ["**This Week (High impact, USD):** (trimmed)"]
+    for day in order:
+        day_events = by_day.get(day, [])
+        if not day_events:
+            trimmed.append(f"\n**{day}:** no news")
+            continue
+        trimmed.append(f"\n**{day}:**")
+        for ev in day_events[:6]:
+            t = ev.dt_ny.strftime("%-I:%M %p ET")
+            actual = ev.actual if ev.actual else "PENDING"
+            forecast = ev.forecast if ev.forecast else "N/A"
+            prev = ev.previous if ev.previous else "N/A"
+            trimmed.append(
+                f"- **{t}**: {ev.title}; Actual: **{actual}**; Forecast: **{forecast}**; Previous: **{prev}**"
+            )
+    return "\n".join(trimmed)
 
 def chunk_message(text: str, max_len: int = DISCORD_MAX_LEN) -> list[str]:
     """
