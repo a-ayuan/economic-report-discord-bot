@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 import uvicorn
 
@@ -27,7 +26,6 @@ async def main() -> None:
     setup_logging()
     settings = AppSettings.load()
 
-    # Run both the Discord bot and the health server
     await asyncio.gather(
         run_web(settings),
         run_bot(settings),

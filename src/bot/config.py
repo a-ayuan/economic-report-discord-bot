@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 class AppSettings:
     discord_bot_token: str
     discord_channel_id: int
+    command_channel_id: Optional[int]
 
     tz: str
     port: int
@@ -36,6 +37,13 @@ class AppSettings:
         if not channel_id.isdigit():
             raise RuntimeError("DISCORD_CHANNEL_ID must be an integer")
 
+        cmd_channel_id_raw = os.getenv("COMMAND_CHANNEL_ID", "").strip()
+        command_channel_id: Optional[int] = None
+        if cmd_channel_id_raw:
+            if not cmd_channel_id_raw.isdigit():
+                raise RuntimeError("COMMAND_CHANNEL_ID must be an integer if provided")
+            command_channel_id = int(cmd_channel_id_raw)
+
         tz = os.getenv("TZ", "America/New_York")
         port = int(os.getenv("PORT", "10000"))
 
@@ -50,6 +58,7 @@ class AppSettings:
         return AppSettings(
             discord_bot_token=token,
             discord_channel_id=int(channel_id),
+            command_channel_id=command_channel_id,
             tz=tz,
             port=port,
             cache_path=cache_path,
