@@ -1,10 +1,8 @@
 from fastapi import FastAPI
 
-def make_app() -> FastAPI:
-    app = FastAPI()
+app = FastAPI()
 
-    @app.get("/health")
-    def health():
-        return {"ok": True}
-
-    return app
+@app.get("/health")
+def health():
+    print("Health endpoint was pinged")
+    return {"ok": True}
