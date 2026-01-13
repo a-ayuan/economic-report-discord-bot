@@ -64,6 +64,7 @@ def _state_signature(state: BotState) -> tuple:
         state.active_start_et.isoformat(),
         tuple(sorted(state.posted_release_groups)),
         tuple(sorted(state.posted_missing_groups)),
+        tuple(sorted(state.posted_expired_groups)),
     )
 
 async def main() -> None:
@@ -90,6 +91,7 @@ async def main() -> None:
         burst_window_seconds=s.burst_window_seconds,
         backoff_start_seconds=s.backoff_start_seconds,
         backoff_max_seconds=s.backoff_max_seconds,
+        trading_day_cutoff_hour_et=17,  # 5 PM
     )
 
     cache_path = s.cache_dir / "calendar.json"
@@ -161,10 +163,6 @@ async def main() -> None:
         log.info("Calendar cleaned (%s). active_start_et=%s", reason, state.active_start_et.isoformat())
 
     async def scheduled_job() -> None:
-        """
-        Every 30 minutes: rebuild calendar (respecting active_start_et) and save if changed.
-        Live release polling is handled by the live monitor loop.
-        """
         try:
             async with events_lock:
                 await rebuild_calendar()
@@ -180,11 +178,7 @@ async def main() -> None:
         except Exception as ex:
             log.exception("Weekly clean job error: %s", ex)
 
-    async def post_group_release(report_channel: discord.abc.Messageable, group_key: str, group_events: list) -> None:
-        """
-        Post one message for the group.
-        Format: multiple lines, one per event.
-        """
+    async def post_group_release(report_channel: discord.abc.Messageable, group_events: list) -> None:
         lines = []
         for e in sorted(group_events, key=lambda x: x.name):
             lines.append(format_release_line(e))
@@ -193,23 +187,26 @@ async def main() -> None:
             msg = msg[:1800] + "\n…"
         await report_channel.send(msg)
 
-    async def post_group_missing(report_channel: discord.abc.Messageable, group_key: str, group_events: list) -> None:
+    async def post_group_missing(report_channel: discord.abc.Messageable, group_events: list) -> None:
         names = ", ".join(sorted({e.name for e in group_events}))
         scheduled = min(e.scheduled_time_et for e in group_events).strftime("%a %m/%d %I:%M %p ET")
         await report_channel.send(
-            f"⚠️ No data found within 1 minute for: **{names}** (scheduled {scheduled}). "
-            f"I'll keep checking with increasing intervals until the data is available."
+            f"No data found within 1 minute for: **{names}** (scheduled {scheduled}). "
+            f"I'll keep checking with increasing intervals until 5:00 PM ET."
         )
 
-    async def live_monitor_loop() -> None:
-        """
-        This is the missing piece you described.
+    async def post_group_expired(report_channel: discord.abc.Messageable, group_events: list) -> None:
+        names = ", ".join(sorted({e.name for e in group_events}))
+        scheduled = min(e.scheduled_time_et for e in group_events).strftime("%a %m/%d %I:%M %p ET")
+        await report_channel.send(
+            f"Stopping checks for today: **{names}** (scheduled {scheduled}). "
+            f"No data found by **5:00 PM ET**, marking as missing."
+        )
 
-        It runs continuously, but:
-          - it only polls when events are due (burst/backoff planner)
-          - it only saves to disk on changes
-          - it only posts messages once per group (deduped in state.json)
-        """
+    def group_key(e) -> str:
+        return e.group_key or e.event_id
+
+    async def live_monitor_loop() -> None:
         await bot.wait_until_ready()
 
         report_ch = bot.get_channel(s.report_channel_id)
@@ -222,56 +219,70 @@ async def main() -> None:
                 now = now_et(s.timezone)
 
                 async with events_lock:
-                    if not events:
-                        # nothing to do; wait a bit
-                        pass
-                    else:
-                        updated = await watcher.check_due_live_once(events, now_et=now)
-
-                        # Detect changes
+                    if events:
                         before_sig = _events_signature(events)
-                        after_sig = _events_signature(updated)
-                        events[:] = updated  # mutate list in-place
+                        updated = await watcher.check_due_live_once(events, now_et=now)
+                        events[:] = updated
 
-                        # Posting logic (per group)
                         groups = watcher.groups(events)
 
-                        # 1) Missing-after-1-minute: if now > scheduled+60 and group not released and not yet posted
-                        for gkey, gevs in groups.items():
-                            if gkey in state.posted_missing_groups:
+                        # 0) Expire at 5PM ET: mark missing + post once
+                        for gk, gevs in groups.items():
+                            if gk in state.posted_release_groups:
                                 continue
-                            if gkey in state.posted_release_groups:
+                            if gk in state.posted_expired_groups:
                                 continue
 
-                            # Only consider groups where at least one event is active
+                            active = [e for e in gevs if e.status not in ("released", "disabled")]
+                            if not active:
+                                continue
+
+                            # If ANY event in group is past cutoff, expire the whole group (they share timestamp anyway)
+                            if any(watcher.is_expired_for_day(e, now) for e in active):
+                                # Mark missing for all non-disabled that aren't released
+                                for e in gevs:
+                                    if e.status not in ("released", "disabled"):
+                                        e.status = "missing"
+
+                                state.posted_expired_groups.add(gk)
+                                await post_group_expired(report_ch, gevs)
+
+                        # 1) Missing after 1-minute burst window (once)
+                        for gk, gevs in groups.items():
+                            if gk in state.posted_missing_groups:
+                                continue
+                            if gk in state.posted_release_groups or gk in state.posted_expired_groups:
+                                continue
+
                             active = [e for e in gevs if e.status not in ("released", "disabled")]
                             if not active:
                                 continue
 
                             scheduled = min(e.scheduled_time_et for e in gevs)
                             if now >= scheduled + timedelta(seconds=s.burst_window_seconds):
-                                state.posted_missing_groups.add(gkey)
-                                await post_group_missing(report_ch, gkey, gevs)
+                                state.posted_missing_groups.add(gk)
+                                await post_group_missing(report_ch, gevs)
 
-                        # 2) Released: if all (non-disabled) events are released OR at least one has actual and none are still scheduled
-                        for gkey, gevs in groups.items():
-                            if gkey in state.posted_release_groups:
+                        # 2) Released (once)
+                        for gk, gevs in groups.items():
+                            if gk in state.posted_release_groups:
+                                continue
+                            if gk in state.posted_expired_groups:
                                 continue
 
                             non_disabled = [e for e in gevs if e.status != "disabled"]
                             if not non_disabled:
                                 continue
 
-                            # Consider released if every non-disabled is released OR at least one has actual and none remain "scheduled"
                             all_released = all(e.status == "released" for e in non_disabled)
                             any_actual = any(e.release.actual is not None for e in non_disabled)
                             none_scheduled = all(e.status != "scheduled" for e in non_disabled)
 
                             if all_released or (any_actual and none_scheduled):
-                                state.posted_release_groups.add(gkey)
-                                await post_group_release(report_ch, gkey, gevs)
+                                state.posted_release_groups.add(gk)
+                                await post_group_release(report_ch, gevs)
 
-                        # Save only if something changed
+                        after_sig = _events_signature(events)
                         if after_sig != before_sig:
                             maybe_save_events()
                         maybe_save_state()
@@ -287,14 +298,13 @@ async def main() -> None:
         if ctx.channel.id != s.command_channel_id:
             return
 
-        # User command: rebuild calendar immediately (does not interfere with live loop due to lock)
         async with events_lock:
             await rebuild_calendar()
             maybe_save_events()
             maybe_save_state()
 
             now = now_et(s.timezone)
-            week_start, week_end = week_bounds_et(now)
+            week_start, _week_end = week_bounds_et(now)
 
             effective_start = max(week_start, state.active_start_et)
             effective_end = effective_start + timedelta(days=7)
@@ -327,7 +337,6 @@ async def main() -> None:
     scheduler.add_job(weekly_clean_job, "cron", day_of_week="mon", hour=0, minute=5)
     scheduler.start()
 
-    # Startup: build calendar once
     await scheduled_job()
 
     await asyncio.gather(

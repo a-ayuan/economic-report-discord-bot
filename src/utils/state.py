@@ -12,6 +12,7 @@ class BotState:
     # Deduping across restarts
     posted_release_groups: set[str] = field(default_factory=set)
     posted_missing_groups: set[str] = field(default_factory=set)
+    posted_expired_groups: set[str] = field(default_factory=set)
 
 def _monday_start(dt: datetime) -> datetime:
     start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -41,6 +42,7 @@ def load_state(path: Path, tz_name: str) -> BotState:
 
     st.posted_release_groups = set(raw.get("posted_release_groups") or [])
     st.posted_missing_groups = set(raw.get("posted_missing_groups") or [])
+    st.posted_expired_groups = set(raw.get("posted_expired_groups") or [])
     return st
 
 def save_state(path: Path, state: BotState) -> None:
@@ -48,6 +50,7 @@ def save_state(path: Path, state: BotState) -> None:
         "active_start_et": state.active_start_et.isoformat(),
         "posted_release_groups": sorted(state.posted_release_groups),
         "posted_missing_groups": sorted(state.posted_missing_groups),
+        "posted_expired_groups": sorted(state.posted_expired_groups),
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -55,8 +58,9 @@ def save_state(path: Path, state: BotState) -> None:
 
 def cleanup_weekly_state(state: BotState) -> None:
     """
-    Keep state compact. Since we only care about the active 1–2 week window,
+    Keep state compact. Since we only care about the active 1-2 week window,
     it's safe to clear dedupe sets on weekly clean.
     """
     state.posted_release_groups.clear()
     state.posted_missing_groups.clear()
+    state.posted_expired_groups.clear()
