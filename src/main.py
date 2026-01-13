@@ -29,9 +29,9 @@ async def calendar_refresh_loop(settings, session, bot, scheduler):
             save_events(settings.cache_dir, events)
             bot.set_week_events(events)
             scheduler.schedule_events(events)
-            log.info("Calendar refreshed and scheduled")
+            log.info("Calendar refreshed and scheduled (loop)")
         except Exception as e:
-            log.exception("Calendar refresh failed: %s", e)
+            log.exception("Calendar refresh failed (loop): %s", e)
 
         await asyncio.sleep(settings.cal_refresh_minutes * 60)
 
@@ -67,13 +67,33 @@ async def main_async():
     scheduler.on_event_released = bot.post_release
     scheduler.start()
 
-    # Load cached events on boot (so !calendar works fast)
+    # Load cached events on boot (so !calendar works fast even before first loop refresh)
     cached = load_events(settings.cache_dir)
     if cached:
         bot.set_week_events(cached)
         scheduler.schedule_events(cached)
 
-    # Start background calendar refresh task
+    # Inject a "refresh hook" so !calendar can force a live scrape and update state
+    cfg_events = load_config_events("src/config/events.yaml")
+
+    async def refresh_hook() -> list:
+        # refresh_week_calendar is sync (requests/bs4). Run it in a thread executor.
+        loop = asyncio.get_running_loop()
+
+        def _do_refresh():
+            now = now_et()
+            ws = start_of_week_et(now)
+            we = end_of_week_et(now)
+            events = refresh_week_calendar(session, cfg_events, ws, we)
+            save_events(settings.cache_dir, events)
+            scheduler.schedule_events(events)
+            return events
+
+        return await loop.run_in_executor(None, _do_refresh)
+
+    bot.set_refresh_hook(refresh_hook)
+
+    # Start background calendar refresh task (still useful for periodic updates)
     asyncio.create_task(calendar_refresh_loop(settings, session, bot, scheduler))
 
     # Run discord bot (blocks until stopped)
