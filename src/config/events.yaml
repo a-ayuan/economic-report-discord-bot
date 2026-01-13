@@ -1,30 +1,18 @@
 events:
-  - id: bls_cpi_mm
+  - id: bls_cpi
     source: bls
-    title: "CPI m/m"
-    match_hint: "Consumer Price Index"
-    forecast: null
-
-  - id: bls_cpi_yy
-    source: bls
-    title: "CPI y/y"
-    match_hint: "Consumer Price Index"
-    forecast: null
-
-  - id: bls_core_cpi_mm
-    source: bls
-    title: "Core CPI m/m"
+    title: "Consumer Price Index"
     match_hint: "Consumer Price Index"
     forecast: null
 
   - id: bls_employment_situation
     source: bls
-    title: "Nonfarm Payrolls"
-    match_hint: "Employment Situation"
+    title: "Employment Situation"
+    match_hint: "The Employment Situation"
     forecast: null
 
-  - id: bea_pce
+  - id: bea_personal_income_outlays
     source: bea
-    title: "PCE Price Index"
+    title: "Personal Income and Outlays"
     match_hint: "Personal Income and Outlays"
     forecast: null
