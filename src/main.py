@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from discord.ext import commands
 
 from src.config import load_settings
-from src.health.server import make_app as health_app  # noqa: F401
+from src.health.server import app as health_app  # noqa: F401
 from src.logging_config import setup_logging
 from src.services.calendar_service import CalendarService
 from src.services.release_watcher import ReleaseWatcher
