@@ -1,6 +1,7 @@
 import logging
 import re
-from datetime import datetime
+from datetime import date, datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
@@ -22,21 +23,24 @@ BLS_SCHEDULES = {
 BLS_API_V2 = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 
 SERIES = {
-    "CPI_ALL_SA": "CUUR0000SA0",
-    "CPI_CORE_SA": "CUUR0000SA0L1E",
+    # CPI-U (All items)
+    "CPI_ALL_NSA": "CUUR0000SA0",   # NOT seasonally adjusted (U)
+    "CPI_ALL_SA":  "CUSR0000SA0",   # seasonally adjusted (S)
+
+    # CPI-U (All items less food & energy)
+    "CPI_CORE_NSA": "CUUR0000SA0L1E",
+    "CPI_CORE_SA":  "CUSR0000SA0L1E",
+
     "PPI_FINAL_DEMAND": "WPUFD4",
     "NFP_PAYROLLS": "CES0000000001",
     "UNEMP_RATE": "LNS14000000",
     "AHE": "CES0500000003",
-    "JOLTS_OPENINGS": None,  # needs mapping if you want it through BLS API
+    "JOLTS_OPENINGS": None,
 }
 
 # Accept "08:30 AM", "8:30 a.m. ET", "8:30 AM ET" etc.
 TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*(a\.m\.|p\.m\.|am|pm)\b", re.IGNORECASE)
 
-# BLS schedule text rows commonly look like:
-# "December 2025 Jan. 13, 2026 08:30 AM"
-# Some months are "May" (no dot). Some are "Nov." (dot).
 SCHEDULE_TEXT_ROW_RE = re.compile(
     r"^(?P<ref_month>[A-Za-z]+\s+\d{4})\s+"
     r"(?P<mon>[A-Za-z]{3,9}\.?)\s+(?P<day>\d{1,2}),\s+(?P<year>\d{4})\s+"
@@ -72,16 +76,7 @@ MONTH_MAP = {
     "dec.": 12,
 }
 
-def _et(dt: datetime, tz_name: str) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=ZoneInfo(tz_name))
-    return dt.astimezone(ZoneInfo(tz_name))
-
 def _parse_time(s: str) -> tuple[int, int] | None:
-    """
-    Parse time strings like:
-      "08:30 AM", "8:30 a.m. ET", "8:30 AM ET"
-    """
     if not s:
         return None
     s2 = s.strip().lower().replace("et", "").strip()
@@ -100,89 +95,67 @@ def _parse_time(s: str) -> tuple[int, int] | None:
     return hh, mm
 
 def _extract_datetimes_from_tables(soup: BeautifulSoup, tz_name: str) -> list[datetime]:
-    """
-    If the page has a real HTML table, try to extract schedule rows.
-    We do NOT assume one fixed header; we just look for rows that contain a parsable date + time.
-    """
     out: list[datetime] = []
-
     for table in soup.find_all("table"):
         for tr in table.find_all("tr"):
             cells = tr.find_all(["td", "th"])
             if len(cells) < 2:
                 continue
 
-            # Try to find a "Release Date" like "Jan. 13, 2026" somewhere in the row
             row_text = [c.get_text(" ", strip=True) for c in cells]
             joined = " | ".join([t for t in row_text if t])
 
-            # Find an embedded "Mon. DD, YYYY"
             m = re.search(r"([A-Za-z]{3,9}\.?)\s+(\d{1,2}),\s+(\d{4})", joined)
             if not m:
                 continue
 
             mon_raw = m.group(1).strip().lower()
-            if mon_raw not in MONTH_MAP:
+            mon = MONTH_MAP.get(mon_raw)
+            if not mon:
                 continue
-            mon = MONTH_MAP[mon_raw]
-            day = int(m.group(2))
-            year = int(m.group(3))
 
-            # Find a time token
             t = _parse_time(joined)
             if t is None:
                 continue
+
+            day = int(m.group(2))
+            year = int(m.group(3))
             hh, mm = t
+            out.append(datetime(year, mon, day, hh, mm, tzinfo=ZoneInfo(tz_name)))
 
-            dt = datetime(year, mon, day, hh, mm, tzinfo=ZoneInfo(tz_name))
-            out.append(dt)
-
-    # De-dupe
-    uniq = sorted(set(out))
-    return uniq
+    return sorted(set(out))
 
 def _extract_datetimes_from_text(soup: BeautifulSoup, tz_name: str) -> list[datetime]:
-    """
-    Parse the plain-text schedule section:
-      "Reference Month Release Date Release Time"
-      "December 2025 Jan. 09, 2026 08:30 AM"
-    """
     text = soup.get_text("\n", strip=True)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
-    # Find the schedule header line
     header_idx = -1
     for i, ln in enumerate(lines):
-        # BLS pages show: "Reference Month Release Date Release Time"
         if "Reference Month" in ln and "Release Date" in ln and "Release Time" in ln:
             header_idx = i
             break
-
     if header_idx == -1:
         return []
 
     out: list[datetime] = []
     for ln in lines[header_idx + 1 :]:
-        # Stop once we reach subscription/footer content
         if ln.lower().startswith("subscribe to the bls online calendar"):
             break
 
         m = SCHEDULE_TEXT_ROW_RE.match(ln)
         if not m:
-            # Some pages contain occasional non-row lines; ignore.
             continue
 
         mon_raw = m.group("mon").strip().lower()
-        if mon_raw not in MONTH_MAP:
+        mon = MONTH_MAP.get(mon_raw)
+        if not mon:
             continue
 
-        mon = MONTH_MAP[mon_raw]
         day = int(m.group("day"))
         year = int(m.group("year"))
         hh = int(m.group("hh"))
         mm = int(m.group("mm"))
         ampm = m.group("ampm").strip().upper()
-
         if ampm == "PM" and hh != 12:
             hh += 12
         if ampm == "AM" and hh == 12:
@@ -190,19 +163,22 @@ def _extract_datetimes_from_text(soup: BeautifulSoup, tz_name: str) -> list[date
 
         out.append(datetime(year, mon, day, hh, mm, tzinfo=ZoneInfo(tz_name)))
 
-    uniq = sorted(set(out))
-    return uniq
+    return sorted(set(out))
 
 def _extract_schedule_datetimes(soup: BeautifulSoup, tz_name: str) -> list[datetime]:
-    """
-    Combined extractor:
-      1) Try tables (some BLS pages may be table-based in the future)
-      2) Fall back to parsing the schedule section text (current common format)
-    """
     dts = _extract_datetimes_from_tables(soup, tz_name)
-    if dts:
-        return dts
-    return _extract_datetimes_from_text(soup, tz_name)
+    return dts if dts else _extract_datetimes_from_text(soup, tz_name)
+
+def _add_months(d: date, delta_months: int) -> date:
+    y = d.year
+    m = d.month + delta_months
+    while m > 12:
+        y += 1
+        m -= 12
+    while m < 1:
+        y -= 1
+        m += 12
+    return date(y, m, 1)
 
 class BLSProvider(Provider):
     name = "BLS"
@@ -224,7 +200,6 @@ class BLSProvider(Provider):
 
             soup = BeautifulSoup(html, "html.parser")
             sched_times = _extract_schedule_datetimes(soup, self.tz_name)
-
             if not sched_times:
                 log.warning("No schedule rows detected on %s", url)
                 continue
@@ -330,7 +305,7 @@ class BLSProvider(Provider):
                                 currency="USD",
                                 scheduled_time_et=scheduled,
                                 provider=self.name,
-                                provider_configured=False,  # not mapped by default
+                                provider_configured=False,
                                 group_key=group,
                             ),
                         ]
@@ -346,7 +321,7 @@ class BLSProvider(Provider):
                             currency="USD",
                             scheduled_time_et=scheduled,
                             provider=self.name,
-                            provider_configured=False,  # needs series id mapping
+                            provider_configured=False,
                             group_key=group,
                         )
                     )
@@ -361,34 +336,26 @@ class BLSProvider(Provider):
 
         forecast = None  # not provided by BLS
 
-        if event.name in ("CPI m/m", "CPI y/y"):
-            series_id = SERIES["CPI_ALL_SA"]
-            return await self._fill_pct_change(
-                event,
-                series_id,
-                kind="yoy" if "y/y" in event.name else "mom",
-                forecast=forecast,
-            )
+        if event.name == "CPI m/m":
+            return await self._fill_pct_change(event, SERIES["CPI_ALL_SA"], kind="mom", forecast=forecast)
+
+        if event.name == "CPI y/y":
+            return await self._fill_pct_change(event, SERIES["CPI_ALL_NSA"], kind="yoy", forecast=forecast)
 
         if event.name == "Core CPI m/m":
-            series_id = SERIES["CPI_CORE_SA"]
-            return await self._fill_pct_change(event, series_id, kind="mom", forecast=forecast)
+            return await self._fill_pct_change(event, SERIES["CPI_CORE_SA"], kind="mom", forecast=forecast)
 
         if event.name == "PPI m/m":
-            series_id = SERIES["PPI_FINAL_DEMAND"]
-            return await self._fill_pct_change(event, series_id, kind="mom", forecast=forecast)
+            return await self._fill_pct_change(event, SERIES["PPI_FINAL_DEMAND"], kind="mom", forecast=forecast)
 
         if event.name == "Non-Farm Employment Change":
-            series_id = SERIES["NFP_PAYROLLS"]
-            return await self._fill_level_change(event, series_id, unit="K", forecast=forecast)
+            return await self._fill_level_change(event, SERIES["NFP_PAYROLLS"], unit="K", forecast=forecast)
 
         if event.name == "Unemployment Rate":
-            series_id = SERIES["UNEMP_RATE"]
-            return await self._fill_latest(event, series_id, unit="%", forecast=forecast)
+            return await self._fill_latest(event, SERIES["UNEMP_RATE"], unit="%", forecast=forecast)
 
         if event.name == "Average Hourly Earnings m/m":
-            series_id = SERIES["AHE"]
-            return await self._fill_pct_change(event, series_id, kind="mom", forecast=forecast)
+            return await self._fill_pct_change(event, SERIES["AHE"], kind="mom", forecast=forecast)
 
         event.status = "disabled"
         return event
@@ -397,92 +364,176 @@ class BLSProvider(Provider):
         payload: dict = {"seriesid": [series_id]}
         if self.api_key:
             payload["registrationKey"] = self.api_key
-        payload["startyear"] = str(datetime.now().year - 2)
+        payload["startyear"] = str(datetime.now().year - 3)
         payload["endyear"] = str(datetime.now().year)
         return await self.http.post_json(BLS_API_V2, payload)
 
     @staticmethod
-    def _extract_latest_points(resp: dict) -> list[tuple[str, float]]:
+    def _extract_latest_points(resp: dict) -> list[tuple[date, Optional[float]]]:
         series = (resp.get("Results") or {}).get("series") or []
         if not series:
             return []
+
         data = series[0].get("data") or []
-        pts: list[tuple[str, float]] = []
+        pts: list[tuple[date, Optional[float]]] = []
+
         for row in data:
             year = row.get("year")
             period = row.get("period")
-            if not (year and period and str(period).startswith("M")):
+            val = row.get("value")
+
+            if not (year and period and isinstance(period, str) and period.startswith("M")):
                 continue
-            m = int(str(period)[1:])
-            ym = f"{year}-{m:02d}"
+
             try:
-                v = float(row.get("value"))
+                m = int(period[1:])
             except Exception:
                 continue
-            pts.append((ym, v))
+            if m < 1 or m > 12:
+                continue
+
+            d = date(int(year), m, 1)
+            if val in (None, "", "-"):
+                pts.append((d, None))
+                continue
+
+            try:
+                v = float(val)
+            except Exception:
+                pts.append((d, None))
+                continue
+
+            pts.append((d, v))
+
         pts.sort(key=lambda x: x[0])
         return pts
+
+    @staticmethod
+    def _points_to_month_map(pts: list[tuple[date, Optional[float]]]) -> dict[date, Optional[float]]:
+        return {d: v for d, v in pts}
+
+    @staticmethod
+    def _find_last_valid_mom(
+        month_map: dict[date, Optional[float]],
+        months_sorted: list[date],
+        *,
+        before: Optional[date] = None,
+    ) -> tuple[date, float] | None:
+        for end in reversed(months_sorted):
+            if before is not None and end >= before:
+                continue
+            prev = _add_months(end, -1)
+            v_end = month_map.get(end)
+            v_prev = month_map.get(prev)
+            if v_end is None or v_prev is None:
+                continue
+            mom = (v_end / v_prev - 1.0) * 100.0
+            return end, mom
+        return None
+
+    @staticmethod
+    def _find_last_valid_yoy(
+        month_map: dict[date, Optional[float]],
+        months_sorted: list[date],
+        *,
+        before: Optional[date] = None,
+    ) -> tuple[date, float] | None:
+        for end in reversed(months_sorted):
+            if before is not None and end >= before:
+                continue
+            base = _add_months(end, -12)
+            v_end = month_map.get(end)
+            v_base = month_map.get(base)
+            if v_end is None or v_base is None:
+                continue
+            yoy = (v_end / v_base - 1.0) * 100.0
+            return end, yoy
+        return None
 
     async def _fill_latest(self, event: EconomicEvent, series_id: str, unit: str, forecast: str | None) -> EconomicEvent:
         resp = await self._bls_post(series_id)
         pts = self._extract_latest_points(resp)
-        if len(pts) < 2:
+        vals = [(d, v) for d, v in pts if v is not None]
+        if len(vals) < 2:
             return event
 
-        prev = pts[-2][1]
-        cur = pts[-1][1]
+        prev = vals[-2][1]
+        cur = vals[-1][1]
 
         event.status = "released"
         event.release = ReleaseData(
-            actual=f"{cur:.2f}",
-            previous=f"{prev:.2f}",
+            actual=f"{cur:.1f}",
+            previous=f"{prev:.1f}",
             forecast=forecast,
             unit=unit,
             updated_at=datetime.now(ZoneInfo(self.tz_name)),
-            source_url="https://api.bls.gov/publicAPI/v2/timeseries/data/",
+            source_url=BLS_API_V2,
         )
         return event
 
     async def _fill_pct_change(self, event: EconomicEvent, series_id: str, kind: str, forecast: str | None) -> EconomicEvent:
         resp = await self._bls_post(series_id)
         pts = self._extract_latest_points(resp)
+        month_map = self._points_to_month_map(pts)
+        months = sorted(month_map.keys())
+        if not months:
+            return event
 
         if kind == "mom":
-            if len(pts) < 3:
+            last = self._find_last_valid_mom(month_map, months)
+            if last is None:
                 return event
-            prev = pts[-2][1]
-            cur = pts[-1][1]
-            prevprev = pts[-3][1]
-            mom = (cur / prev - 1.0) * 100.0
-            prev_mom = (prev / prevprev - 1.0) * 100.0
+            end_d, mom = last
+
+            prev_calc = self._find_last_valid_mom(month_map, months, before=end_d)
+            prev_str = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
+
+            latest_calendar = months[-1]
+            if end_d != latest_calendar:
+                log.warning(
+                    "Latest m/m unavailable for %s at %s; falling back to last valid m/m ending %s",
+                    series_id,
+                    latest_calendar,
+                    end_d,
+                )
+
             event.status = "released"
             event.release = ReleaseData(
-                actual=f"{mom:.2f}%",
-                previous=f"{prev_mom:.2f}%",
+                actual=f"{mom:.1f}%",
+                previous=prev_str,
                 forecast=forecast,
                 unit="%",
                 updated_at=datetime.now(ZoneInfo(self.tz_name)),
-                source_url="https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                source_url=BLS_API_V2,
             )
             return event
 
         if kind == "yoy":
-            if len(pts) < 14:
+            last = self._find_last_valid_yoy(month_map, months)
+            if last is None:
                 return event
-            cur = pts[-1][1]
-            year_ago = pts[-13][1]
-            prev = pts[-2][1]
-            prev_year_ago = pts[-14][1]
-            yoy = (cur / year_ago - 1.0) * 100.0
-            prev_yoy = (prev / prev_year_ago - 1.0) * 100.0
+            end_d, yoy = last
+
+            prev_calc = self._find_last_valid_yoy(month_map, months, before=end_d)
+            prev_str = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
+
+            latest_calendar = months[-1]
+            if end_d != latest_calendar:
+                log.warning(
+                    "Latest y/y unavailable for %s at %s; falling back to last valid y/y ending %s",
+                    series_id,
+                    latest_calendar,
+                    end_d,
+                )
+
             event.status = "released"
             event.release = ReleaseData(
-                actual=f"{yoy:.2f}%",
-                previous=f"{prev_yoy:.2f}%",
+                actual=f"{yoy:.1f}%",
+                previous=prev_str,
                 forecast=forecast,
                 unit="%",
                 updated_at=datetime.now(ZoneInfo(self.tz_name)),
-                source_url="https://api.bls.gov/publicAPI/v2/timeseries/data/",
+                source_url=BLS_API_V2,
             )
             return event
 
@@ -491,13 +542,17 @@ class BLSProvider(Provider):
     async def _fill_level_change(self, event: EconomicEvent, series_id: str, unit: str, forecast: str | None) -> EconomicEvent:
         resp = await self._bls_post(series_id)
         pts = self._extract_latest_points(resp)
-        if len(pts) < 3:
+        vals = [(d, v) for d, v in pts if v is not None]
+        if len(vals) < 3:
             return event
-        prev = pts[-2][1]
-        cur = pts[-1][1]
-        prevprev = pts[-3][1]
+
+        prevprev = vals[-3][1]
+        prev = vals[-2][1]
+        cur = vals[-1][1]
+
         change = cur - prev
         prev_change = prev - prevprev
+
         event.status = "released"
         event.release = ReleaseData(
             actual=f"{change:.0f}",
@@ -505,6 +560,6 @@ class BLSProvider(Provider):
             forecast=forecast,
             unit=unit,
             updated_at=datetime.now(ZoneInfo(self.tz_name)),
-            source_url="https://api.bls.gov/publicAPI/v2/timeseries/data/",
+            source_url=BLS_API_V2,
         )
         return event

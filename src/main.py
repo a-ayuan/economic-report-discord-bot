@@ -110,19 +110,23 @@ async def main() -> None:
 
     bot = make_bot()
 
-    def maybe_save_events() -> None:
+    def maybe_save_events() -> bool:
         nonlocal last_events_sig, events
         sig = _events_signature(events)
         if sig != last_events_sig:
             save_events(cache_path, events)
             last_events_sig = sig
+            return True
+        return False
 
-    def maybe_save_state() -> None:
+    def maybe_save_state() -> bool:
         nonlocal last_state_sig, state
         sig = _state_signature(state)
         if sig != last_state_sig:
             save_state(state_path, state)
             last_state_sig = sig
+            return True
+        return False
 
     async def rebuild_calendar() -> None:
         nonlocal events, state
@@ -134,7 +138,6 @@ async def main() -> None:
 
         fresh = await calendar_service.build(start, end)
 
-        # Merge: keep existing release data/status where IDs match
         by_id = {e.event_id: e for e in events}
         merged = []
         for e in fresh:
@@ -203,9 +206,6 @@ async def main() -> None:
             f"No data found by **5:00 PM ET**, marking as missing."
         )
 
-    def group_key(e) -> str:
-        return e.group_key or e.event_id
-
     async def live_monitor_loop() -> None:
         await bot.wait_until_ready()
 
@@ -226,7 +226,7 @@ async def main() -> None:
 
                         groups = watcher.groups(events)
 
-                        # 0) Expire at 5PM ET: mark missing + post once
+                        # Expire at 5PM ET
                         for gk, gevs in groups.items():
                             if gk in state.posted_release_groups:
                                 continue
@@ -237,9 +237,7 @@ async def main() -> None:
                             if not active:
                                 continue
 
-                            # If ANY event in group is past cutoff, expire the whole group (they share timestamp anyway)
                             if any(watcher.is_expired_for_day(e, now) for e in active):
-                                # Mark missing for all non-disabled that aren't released
                                 for e in gevs:
                                     if e.status not in ("released", "disabled"):
                                         e.status = "missing"
@@ -247,7 +245,7 @@ async def main() -> None:
                                 state.posted_expired_groups.add(gk)
                                 await post_group_expired(report_ch, gevs)
 
-                        # 1) Missing after 1-minute burst window (once)
+                        # Missing after 1-minute burst
                         for gk, gevs in groups.items():
                             if gk in state.posted_missing_groups:
                                 continue
@@ -263,7 +261,7 @@ async def main() -> None:
                                 state.posted_missing_groups.add(gk)
                                 await post_group_missing(report_ch, gevs)
 
-                        # 2) Released (once)
+                        # Released (once)
                         for gk, gevs in groups.items():
                             if gk in state.posted_release_groups:
                                 continue
@@ -327,6 +325,63 @@ async def main() -> None:
             await clean_calendar(reason="manual_command")
             start_str = state.active_start_et.strftime("%a %m/%d %I:%M %p ET")
         await ctx.send(f"Cleaned calendar. Next active week starts at: {start_str}")
+
+    @bot.command(name="rerun")
+    async def rerun_cmd(ctx: commands.Context) -> None:
+        """
+        One-off command to attempt fetching release data again from sources.
+
+        Important properties:
+          - It only triggers work (one forced fetch pass).
+          - It does NOT alter live loop cadence/timers.
+          - It uses the same lock so it won't fight the running monitor.
+        """
+        nonlocal events
+        if ctx.channel.id != s.command_channel_id:
+            return
+
+        report_ch = bot.get_channel(s.report_channel_id)
+        if report_ch is None:
+            await ctx.send("Report channel not found. Check REPORT_CHANNEL_ID.")
+            return
+
+        async with events_lock:
+            before_sig = _events_signature(events)
+            now = now_et(s.timezone)
+
+            # Force one fetch pass for all events (excluding expired-by-5pm)
+            events = await watcher.force_poll_once(events, now_et=now, include_expired_for_day=True)
+
+            # If anything becomes released, post (deduped)
+            groups = watcher.groups(events)
+            posted_any = False
+            for gk, gevs in groups.items():
+                # if gk in state.posted_release_groups:
+                #     continue
+                if gk in state.posted_expired_groups:
+                    # We still allow rerun to post release if it actually gets data
+                    pass
+
+                non_disabled = [e for e in gevs if e.status != "disabled"]
+                if not non_disabled:
+                    continue
+
+                all_released = all(e.status == "released" for e in non_disabled)
+                any_actual = any(e.release.actual is not None for e in non_disabled)
+                none_scheduled = all(e.status != "scheduled" for e in non_disabled)
+
+                if all_released or (any_actual and none_scheduled):
+                    state.posted_release_groups.add(gk)
+                    await post_group_release(report_ch, gevs)
+                    posted_any = True
+
+            after_sig = _events_signature(events)
+            changed = (after_sig != before_sig)
+            if changed:
+                maybe_save_events()
+            maybe_save_state()
+
+        await ctx.send("Rerun complete." + (" Posted new releases." if posted_any else " No new releases found."))
 
     @bot.event
     async def on_ready():

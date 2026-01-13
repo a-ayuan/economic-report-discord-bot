@@ -24,6 +24,9 @@ class ReleaseWatcher:
     - If still missing after burst window:
         poll with backoff (doubling) up to backoff_max_seconds
     - Stop polling at trading-day cutoff (5:00 PM ET) on the scheduled date
+
+    NOTE: The !rerun command uses force_poll_once() which does a one-off fetch
+    WITHOUT altering internal polling cadence/timers.
     """
 
     def __init__(
@@ -48,9 +51,6 @@ class ReleaseWatcher:
         self._backoff: dict[str, int] = {}
 
     def _cutoff_dt(self, e: EconomicEvent) -> datetime:
-        """
-        Cutoff is 5:00 PM ET on the same calendar date as the scheduled release.
-        """
         s = e.scheduled_time_et
         return s.replace(hour=self.cutoff_hour, minute=0, second=0, microsecond=0)
 
@@ -65,7 +65,6 @@ class ReleaseWatcher:
 
         cutoff = self._cutoff_dt(e)
         if now_et >= cutoff:
-            # Stop polling after cutoff.
             self._next_poll_at.pop(e.event_id, None)
             self._backoff.pop(e.event_id, None)
             return PollPlan(False, None, False, None, None, expired_for_day=True)
@@ -114,9 +113,7 @@ class ReleaseWatcher:
     async def maybe_poll(self, e: EconomicEvent, now_et: datetime) -> EconomicEvent:
         plan = self.plan(e, now_et)
         if plan.expired_for_day:
-            # main loop will mark as missing at group level
             return e
-
         if not plan.due:
             return e
 
@@ -124,7 +121,6 @@ class ReleaseWatcher:
 
         if updated.status != "released":
             cutoff = self._cutoff_dt(e)
-            # Don’t schedule beyond cutoff
             if now_et + timedelta(seconds=self.burst_poll_seconds) >= cutoff:
                 self._next_poll_at.pop(e.event_id, None)
                 self._backoff.pop(e.event_id, None)
@@ -155,6 +151,38 @@ class ReleaseWatcher:
             updated.append(await self.maybe_poll(e, now_et))
         return updated
 
+    async def force_poll_once(
+        self,
+        events: list[EconomicEvent],
+        now_et: datetime,
+        *,
+        include_expired_for_day: bool = True,
+    ) -> list[EconomicEvent]:
+        """
+        One-off forced fetch used by !rerun.
+
+        - Polls each eligible event exactly once.
+        - Does NOT touch _next_poll_at/_backoff timers (so it doesn't affect live cadence).
+        - If include_expired_for_day=True, it will also attempt fetch even after the 5pm cutoff.
+
+        Eligibility:
+          now >= scheduled_time, status not in {released, disabled}
+        """
+        out: list[EconomicEvent] = []
+        for e in events:
+            # if e.status in ("released", "disabled"):
+            #     out.append(e)
+            #     continue
+            if now_et < e.scheduled_time_et:
+                out.append(e)
+                continue
+            if (not include_expired_for_day) and self.is_expired_for_day(e, now_et):
+                out.append(e)
+                continue
+
+            out.append(await self.poll_event(e))
+        return out
+
     @staticmethod
     def groups(events) -> dict[str, list[EconomicEvent]]:
         g: dict[str, list[EconomicEvent]] = {}
@@ -164,9 +192,6 @@ class ReleaseWatcher:
         return g
 
     def is_expired_for_day(self, e: EconomicEvent, now_et: datetime) -> bool:
-        """
-        Helper for main loop: after cutoff (5PM ET on scheduled date), stop and mark missing.
-        """
         if e.status in ("released", "disabled"):
             return False
         if now_et < e.scheduled_time_et:

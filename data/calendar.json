@@ -7,14 +7,14 @@
     "scheduled_time_et": "2026-01-13T08:30:00-05:00",
     "provider": "BLS",
     "provider_configured": true,
-    "status": "scheduled",
+    "status": "released",
     "release": {
-      "actual": null,
-      "previous": null,
+      "actual": "0.3%",
+      "previous": "0.3%",
       "forecast": null,
-      "unit": null,
-      "updated_at": null,
-      "source_url": null
+      "unit": "%",
+      "updated_at": "2026-01-13T13:54:57.577977-05:00",
+      "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "cpi:2026-01-13T08:30:00-05:00"
   },
@@ -26,14 +26,14 @@
     "scheduled_time_et": "2026-01-13T08:30:00-05:00",
     "provider": "BLS",
     "provider_configured": true,
-    "status": "scheduled",
+    "status": "released",
     "release": {
-      "actual": null,
-      "previous": null,
+      "actual": "2.7%",
+      "previous": "2.7%",
       "forecast": null,
-      "unit": null,
-      "updated_at": null,
-      "source_url": null
+      "unit": "%",
+      "updated_at": "2026-01-13T13:54:57.706615-05:00",
+      "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "cpi:2026-01-13T08:30:00-05:00"
   },
@@ -45,14 +45,14 @@
     "scheduled_time_et": "2026-01-13T08:30:00-05:00",
     "provider": "BLS",
     "provider_configured": true,
-    "status": "scheduled",
+    "status": "released",
     "release": {
-      "actual": null,
-      "previous": null,
+      "actual": "0.2%",
+      "previous": "0.2%",
       "forecast": null,
-      "unit": null,
-      "updated_at": null,
-      "source_url": null
+      "unit": "%",
+      "updated_at": "2026-01-13T13:54:57.823154-05:00",
+      "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "cpi:2026-01-13T08:30:00-05:00"
   },

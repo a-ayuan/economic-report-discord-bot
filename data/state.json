@@ -1,5 +1,8 @@
 {
   "active_start_et": "2026-01-12T00:00:00-05:00",
-  "posted_release_groups": [],
-  "posted_missing_groups": []
+  "posted_release_groups": [
+    "cpi:2026-01-13T08:30:00-05:00"
+  ],
+  "posted_missing_groups": [],
+  "posted_expired_groups": []
 }
