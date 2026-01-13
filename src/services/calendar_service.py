@@ -1,80 +1,34 @@
 import logging
-from dataclasses import dataclass
 from datetime import datetime
-from zoneinfo import ZoneInfo
-import yaml
-import requests
 
-from ..storage.models import EconEvent
-from ..sources.bls import fetch_bls_schedule
-from ..sources.bea import fetch_bea_schedule
-from ..sources.census import fetch_census_schedule
+from src.models import EconomicEvent
 
-log = logging.getLogger("services.calendar")
+log = logging.getLogger("calendar_service")
 
-@dataclass(frozen=True)
-class ConfigEvent:
-    id: str
-    source: str
-    title: str
-    match_hint: str
-    forecast: str | None
+class CalendarService:
+    def __init__(self, providers: list, post_only_configured_sources: bool):
+        self.providers = providers
+        self.post_only_configured_sources = post_only_configured_sources
 
-def load_config_events(path: str) -> list[ConfigEvent]:
-    with open(path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f) or {}
-    out: list[ConfigEvent] = []
-    for e in raw.get("events", []):
-        out.append(ConfigEvent(
-            id=e["id"],
-            source=e["source"],
-            title=e["title"],
-            match_hint=e.get("match_hint", e["title"]),
-            forecast=e.get("forecast"),
-        ))
-    return out
+    async def build(self, start_et: datetime, end_et: datetime) -> list[EconomicEvent]:
+        all_events: list[EconomicEvent] = []
+        for p in self.providers:
+            try:
+                evs = await p.build_calendar(start_et, end_et)
+                all_events.extend(evs)
+            except Exception as e:
+                log.exception("Provider %s failed build_calendar: %s", getattr(p, "name", "unknown"), e)
 
-def _match(title: str, hint: str) -> bool:
-    return hint.lower() in title.lower()
-
-def refresh_week_calendar(
-    session: requests.Session,
-    cfg_events: list[ConfigEvent],
-    week_start: datetime,
-    week_end: datetime,
-) -> list[EconEvent]:
-    tz = ZoneInfo("America/New_York")
-
-    bls_items = fetch_bls_schedule(session)
-    bea_items = fetch_bea_schedule(session)
-    census_items = fetch_census_schedule(session)
-
-    # Source -> list of schedule items (title, dt)
-    universe: dict[str, list[tuple[str, datetime]]] = {
-        "bls": [(i.title, i.release_dt) for i in bls_items],
-        "bea": [(i.title, i.release_dt) for i in bea_items],
-        "census": [(i.title, i.release_dt) for i in census_items],
-    }
-
-    out: list[EconEvent] = []
-    for ce in cfg_events:
-        candidates = universe.get(ce.source, [])
-        for (t, dt) in candidates:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=tz)
-            if not (week_start <= dt < week_end):
+        # Dedupe by event_id
+        seen = set()
+        deduped: list[EconomicEvent] = []
+        for e in all_events:
+            if e.event_id in seen:
                 continue
-            if _match(t, ce.match_hint):
-                out.append(EconEvent(
-                    id=ce.id,
-                    source=ce.source,
-                    title=ce.title,
-                    release_dt=dt,
-                    url=None,  # optional: set to known release page if you want
-                    forecast=ce.forecast,
-                ))
-                break
+            seen.add(e.event_id)
+            if self.post_only_configured_sources and not e.provider_configured:
+                # keep it in calendar for summary, but mark disabled
+                e.status = "disabled"
+            deduped.append(e)
 
-    out.sort(key=lambda e: e.release_dt)
-    log.info("Built week calendar with %d configured events", len(out))
-    return out
+        return sorted(deduped, key=lambda x: x.scheduled_time_et)

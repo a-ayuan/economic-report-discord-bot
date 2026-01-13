@@ -1,0 +1,135 @@
+[
+  {
+    "event_id": "bls:cpi-m-m:2026-01-13t08:30:00-05:00",
+    "name": "CPI m/m",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-13T08:30:00-05:00",
+    "provider": "BLS",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "cpi:2026-01-13T08:30:00-05:00"
+  },
+  {
+    "event_id": "bls:cpi-y-y:2026-01-13t08:30:00-05:00",
+    "name": "CPI y/y",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-13T08:30:00-05:00",
+    "provider": "BLS",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "cpi:2026-01-13T08:30:00-05:00"
+  },
+  {
+    "event_id": "bls:core-cpi-m-m:2026-01-13t08:30:00-05:00",
+    "name": "Core CPI m/m",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-13T08:30:00-05:00",
+    "provider": "BLS",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "cpi:2026-01-13T08:30:00-05:00"
+  },
+  {
+    "event_id": "bls:ppi-m-m:2026-01-14t08:30:00-05:00",
+    "name": "PPI m/m",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-14T08:30:00-05:00",
+    "provider": "BLS",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "ppi:2026-01-14T08:30:00-05:00"
+  },
+  {
+    "event_id": "bls:core-ppi-m-m:2026-01-14t08:30:00-05:00",
+    "name": "Core PPI m/m",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-14T08:30:00-05:00",
+    "provider": "BLS",
+    "provider_configured": false,
+    "status": "disabled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "ppi:2026-01-14T08:30:00-05:00"
+  },
+  {
+    "event_id": "dol:unemployment-claims:2026-01-15t08:30:00-05:00",
+    "name": "Unemployment Claims",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-15T08:30:00-05:00",
+    "provider": "DOL",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "claims:2026-01-15T08:30:00-05:00"
+  },
+  {
+    "event_id": "dol:unemployment-claims:2026-01-22t08:30:00-05:00",
+    "name": "Unemployment Claims",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-22T08:30:00-05:00",
+    "provider": "DOL",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "claims:2026-01-22T08:30:00-05:00"
+  }
+]
