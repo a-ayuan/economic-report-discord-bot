@@ -76,7 +76,7 @@ async def main() -> None:
     providers = [
         HolidaysProvider(http=http, tz_name=s.timezone),
         BLSProvider(http=http, tz_name=s.timezone, api_key=s.bls_api_key),
-        DOLProvider(http=http, tz_name=s.timezone),
+        DOLProvider(http=http, tz_name=s.timezone, fred_api_key=s.fred_api_key),
         BEAProvider(http=http, tz_name=s.timezone),
         CensusProvider(http=http, tz_name=s.timezone, api_key=s.census_api_key),
         FedProvider(http=http, tz_name=s.timezone),

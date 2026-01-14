@@ -35,6 +35,7 @@ class Settings:
 
     bls_api_key: str | None
     census_api_key: str | None
+    fred_api_key: str | None
 
     post_only_configured_sources: bool
 
@@ -57,6 +58,7 @@ def load_settings() -> Settings:
 
     bls_key = os.getenv("BLS_API_KEY", "").strip() or None
     census_key = os.getenv("CENSUS_API_KEY", "").strip() or None
+    fred_key = os.getenv("FRED_API_KEY", "").strip() or None
 
     return Settings(
         discord_token=token,
@@ -72,6 +74,7 @@ def load_settings() -> Settings:
         timezone=os.getenv("TIMEZONE", "America/New_York"),
         bls_api_key=bls_key,
         census_api_key=census_key,
+        fred_api_key=fred_key,
         post_only_configured_sources=_get_bool("POST_ONLY_CONFIGURED_SOURCES", True),
         health_host=os.getenv("HEALTH_HOST", "0.0.0.0"),
         health_port=_get_int("HEALTH_PORT", 8080),
