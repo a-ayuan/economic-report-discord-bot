@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from datetime import datetime
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
@@ -18,16 +19,25 @@ CENSUS_EI_CAL_LIST = "https://www.census.gov/economic-indicators/calendar-listvi
 CENSUS_RETAIL_RELEASE_SCHEDULE = "https://www.census.gov/retail/release_schedule.html"
 CENSUS_MARTS_CURRENT_PDF = "https://www.census.gov/retail/marts/www/marts_current.pdf"
 
-EITS_MRTSADV_BASE = "https://api.census.gov/data/timeseries/eits/marts"
+# Monthly ART survey time series API
+EITS_MARTS_BASE = "https://api.census.gov/data/timeseries/eits/marts"
 
 CAT_TOTAL = "44X72"
 CAT_AUTOS_PREFIX = "441"
-CAT_GAS_PREFIX = "447"
+
+# Not needed
+# CAT_GAS_PREFIX = "447"
+# CAT_BUILDING_PREFIX = "444"
+# CAT_FOOD_SERVICES_PREFIX = "722"
 
 DATA_TYPE_SALES = "SM"
 INDICATOR_NAME = "Advance Monthly Sales for Retail and Food Services"
 
-_A_CODE_RE = re.compile(r"\bA(\d{12})\b")
+# Calendar list rows include:
+#   Release datetime code: AYYYYMMDDHHMM  (12 digits)
+#   Period covered code:   AYYYYMM        (6 digits)
+_A_RELEASE_DT_RE = re.compile(r"\bA(\d{12})\b")
+_A_PERIOD_RE = re.compile(r"\bA(\d{6})(?!\d)\b")
 
 def _prev_month_key(yyyy_mm: str) -> str:
     y, m = yyyy_mm.split("-")
@@ -38,7 +48,7 @@ def _prev_month_key(yyyy_mm: str) -> str:
         year -= 1
     return f"{year:04d}-{month:02d}"
 
-def _parse_time_yyyy_mm(v: str) -> str | None:
+def _parse_time_yyyy_mm(v: str) -> Optional[str]:
     s = str(v).strip()
     if re.fullmatch(r"\d{4}-\d{2}", s):
         return s
@@ -46,6 +56,19 @@ def _parse_time_yyyy_mm(v: str) -> str | None:
 
 def _is_sa(v: str) -> bool:
     return str(v).strip().lower() in {"1", "y", "yes", "true", "t", "sa", "s"}
+
+def _period_code_to_yyyy_mm(code6: str) -> str:
+    return f"{code6[0:4]}-{code6[4:6]}"
+
+def _mk_group_key(stamp: str, period_yyyy_mm: str) -> str:
+    # Persist period-covered month in the group key so it survives JSON save/load.
+    return f"census:marts:{stamp}:p={period_yyyy_mm}"
+
+def _period_from_group_key(group_key: Optional[str]) -> Optional[str]:
+    if not group_key:
+        return None
+    m = re.search(r":p=(\d{4}-\d{2})\b", group_key)
+    return m.group(1) if m else None
 
 class CensusProvider(Provider):
     name = "CENSUS"
@@ -66,7 +89,7 @@ class CensusProvider(Provider):
         soup = BeautifulSoup(html, "html.parser")
 
         events: list[EconomicEvent] = []
-        seen: set[str] = set()
+        seen_release_stamp: set[str] = set()
 
         for tr in soup.find_all("tr"):
             txt = tr.get_text(" ", strip=True)
@@ -75,18 +98,18 @@ class CensusProvider(Provider):
             if "TBD" in txt.upper():
                 continue
 
-            dt_local: datetime | None = None
+            dt_local: Optional[datetime] = None
             try:
-                code = _A_CODE_RE.search(txt).group(1)
-                dt_local = datetime.strptime(code, "%Y%m%d%H%M").replace(tzinfo=tz)
+                code12 = _A_RELEASE_DT_RE.search(txt).group(1)
+                dt_local = datetime.strptime(code12, "%Y%m%d%H%M").replace(tzinfo=tz)
             except Exception:
                 dt_local = None
 
             if dt_local is None:
                 for a in tr.find_all("a", href=True):
                     try:
-                        code = _A_CODE_RE.search(a.get("href", "")).group(1)
-                        dt_local = datetime.strptime(code, "%Y%m%d%H%M").replace(tzinfo=tz)
+                        code12 = _A_RELEASE_DT_RE.search(a.get("href", "")).group(1)
+                        dt_local = datetime.strptime(code12, "%Y%m%d%H%M").replace(tzinfo=tz)
                         break
                     except Exception:
                         continue
@@ -94,12 +117,26 @@ class CensusProvider(Provider):
             if dt_local is None or not (start_et <= dt_local < end_et):
                 continue
 
-            stamp = dt_local.isoformat()
-            if stamp in seen:
-                continue
-            seen.add(stamp)
+            period_yyyy_mm: Optional[str] = None
+            m = _A_PERIOD_RE.search(txt)
+            if m:
+                period_yyyy_mm = _period_code_to_yyyy_mm(m.group(1))
+            else:
+                for a in tr.find_all("a", href=True):
+                    m2 = _A_PERIOD_RE.search(a.get("href", "") or "")
+                    if m2:
+                        period_yyyy_mm = _period_code_to_yyyy_mm(m2.group(1))
+                        break
 
-            group = f"census:marts:{stamp}"
+            if period_yyyy_mm is None:
+                continue
+
+            stamp = dt_local.isoformat()
+            if stamp in seen_release_stamp:
+                continue
+            seen_release_stamp.add(stamp)
+
+            group = _mk_group_key(stamp, period_yyyy_mm)
 
             events.append(
                 EconomicEvent(
@@ -146,13 +183,14 @@ class CensusProvider(Provider):
         )
 
         try:
-            latest_month = await self._latest_available_month(ref_dt)
-            prevprev = _prev_month_key(latest_month)
+            cur_month = await self._current_month_for_event(event, ref_dt)
+            prev_month = _prev_month_key(cur_month)
+            prevprev_month = _prev_month_key(prev_month)
 
             if event.name == "Retail Sales m/m":
-                prev_change = await self._compute_mm_change_total(latest_month, prevprev, ref_dt)
+                prev_change = await self._compute_mm_change_total(prev_month, prevprev_month, ref_dt)
             elif event.name == "Core Retail Sales m/m":
-                prev_change = await self._compute_core_mm_change(latest_month, prevprev, ref_dt)
+                prev_change = await self._compute_core_mm_change(prev_month, prevprev_month, ref_dt)
             else:
                 return event
 
@@ -163,7 +201,7 @@ class CensusProvider(Provider):
             return event
 
         except Exception as e:
-            log.exception("Census prefill_previous failed for %s (%s): %s", event.name, event.event_id, e)
+            log.exception("prefill_previous failed for %s (%s): %s", event.name, event.event_id, e)
             return event
 
     async def fetch_release(self, event: EconomicEvent) -> EconomicEvent:
@@ -183,32 +221,50 @@ class CensusProvider(Provider):
         )
 
         try:
-            latest_month = await self._latest_available_month(ref_dt)
-            prevprev = _prev_month_key(latest_month)
+            cur_month = await self._current_month_for_event(event, ref_dt)
+            prev_month = _prev_month_key(cur_month)
+            prevprev_month = _prev_month_key(prev_month)
 
             if event.release.previous is None:
                 if event.name == "Retail Sales m/m":
-                    prev_change = await self._compute_mm_change_total(latest_month, prevprev, ref_dt)
+                    prev_change = await self._compute_mm_change_total(prev_month, prevprev_month, ref_dt)
                 elif event.name == "Core Retail Sales m/m":
-                    prev_change = await self._compute_core_mm_change(latest_month, prevprev, ref_dt)
+                    prev_change = await self._compute_core_mm_change(prev_month, prevprev_month, ref_dt)
                 else:
                     event.status = "disabled"
                     return event
                 event.release.previous = f"{prev_change:.1f}%"
 
-            event.release.actual = None
+            actual_change: Optional[float] = None
+            if event.name == "Retail Sales m/m":
+                actual_change = await self._try_compute_mm_change_total(cur_month, prev_month, ref_dt)
+            elif event.name == "Core Retail Sales m/m":
+                actual_change = await self._try_compute_core_mm_change(cur_month, prev_month, ref_dt)
+            else:
+                event.status = "disabled"
+                return event
+
+            event.release.actual = f"{actual_change:.1f}%" if actual_change is not None else None
             event.release.forecast = None
             event.release.unit = "%"
             event.release.source_url = CENSUS_MARTS_CURRENT_PDF
             event.release.updated_at = datetime.now(tz)
-            event.status = "scheduled"
+
+            event.status = "released" if actual_change is not None else "scheduled"
             return event
 
         except Exception as e:
-            log.exception("Census fetch_release failed for %s (%s): %s", event.name, event.event_id, e)
+            log.exception("fetch_release failed for %s (%s): %s", event.name, event.event_id, e)
             event.status = "scheduled"
             event.release.source_url = CENSUS_RETAIL_RELEASE_SCHEDULE
             return event
+
+    async def _current_month_for_event(self, event: EconomicEvent, ref_dt: datetime) -> str:
+        period = _period_from_group_key(getattr(event, "group_key", None))
+        if period and re.fullmatch(r"\d{4}-\d{2}", period):
+            return period
+
+        return await self._latest_available_month(ref_dt)
 
     async def _load_data(self, ref_dt: datetime) -> list[list[str]]:
         year = ref_dt.year
@@ -226,7 +282,7 @@ class CensusProvider(Provider):
         if self.api_key:
             params += f"&key={self.api_key}"
 
-        url = f"{EITS_MRTSADV_BASE}?{params}"
+        url = f"{EITS_MARTS_BASE}?{params}"
         body = await self.http.get_text(url)
         data = json.loads(body)
 
@@ -243,8 +299,7 @@ class CensusProvider(Provider):
         idx_val = header.index("cell_value")
         idx_time = header.index("time")
 
-        best: str | None = None
-
+        best: Optional[str] = None
         for r in rows:
             if r[idx_dt] != DATA_TYPE_SALES:
                 continue
@@ -293,6 +348,80 @@ class CensusProvider(Provider):
 
         best = next((r for r in candidates if _is_sa(r[idx_sa])), candidates[0])
         return float(str(best[idx_val]).replace(",", ""))
+
+    async def _fetch_sales_value_prefix_best(self, prefix: str, month: str, ref_dt: datetime) -> float:
+        """
+        Prefer the aggregate code (e.g. '441') when present; otherwise sum the
+        most-granular level available under that prefix (avoids double counting).
+        """
+        data = await self._load_data(ref_dt)
+        header, rows = data[0], data[1:]
+
+        idx_dt = header.index("data_type_code")
+        idx_cat = header.index("category_code")
+        idx_val = header.index("cell_value")
+        idx_sa = header.index("seasonally_adj")
+        idx_time = header.index("time")
+
+        exact_candidates: list[list[str]] = []
+        for r in rows:
+            if r[idx_dt] != DATA_TYPE_SALES:
+                continue
+            if r[idx_time] != month:
+                continue
+            if r[idx_cat] != prefix:
+                continue
+            try:
+                float(str(r[idx_val]).replace(",", ""))
+            except Exception:
+                continue
+            exact_candidates.append(r)
+
+        if exact_candidates:
+            best = next((r for r in exact_candidates if _is_sa(r[idx_sa])), exact_candidates[0])
+            return float(str(best[idx_val]).replace(",", ""))
+
+        by_cat_best: dict[str, tuple[bool, float]] = {}
+        min_len: Optional[int] = None
+
+        for r in rows:
+            if r[idx_dt] != DATA_TYPE_SALES:
+                continue
+            if r[idx_time] != month:
+                continue
+
+            cat = str(r[idx_cat])
+            if not cat.startswith(prefix) or cat == prefix:
+                continue
+            if cat == CAT_TOTAL:
+                continue
+
+            try:
+                val = float(str(r[idx_val]).replace(",", ""))
+            except Exception:
+                continue
+
+            sa = _is_sa(r[idx_sa])
+
+            if min_len is None or len(cat) < min_len:
+                min_len = len(cat)
+                by_cat_best.clear()
+
+            if len(cat) != min_len:
+                continue
+
+            prev = by_cat_best.get(cat)
+            if prev is None:
+                by_cat_best[cat] = (sa, val)
+            else:
+                prev_sa, _prev_val = prev
+                if (not prev_sa) and sa:
+                    by_cat_best[cat] = (True, val)
+
+        if not by_cat_best:
+            raise RuntimeError(f"No matching Census rows for prefix={prefix} {month}")
+
+        return sum(v for _sa, v in by_cat_best.values())
 
     async def _fetch_sales_value_prefix_sum(self, prefix: str, month: str, ref_dt: datetime) -> float:
         data = await self._load_data(ref_dt)
@@ -348,15 +477,24 @@ class CensusProvider(Provider):
         total_cur = await self._fetch_sales_value_exact(CAT_TOTAL, cur, ref_dt)
         total_prev = await self._fetch_sales_value_exact(CAT_TOTAL, prev, ref_dt)
 
-        autos_cur = await self._fetch_sales_value_prefix_sum(CAT_AUTOS_PREFIX, cur, ref_dt)
-        autos_prev = await self._fetch_sales_value_prefix_sum(CAT_AUTOS_PREFIX, prev, ref_dt)
+        autos_cur = await self._fetch_sales_value_prefix_best(CAT_AUTOS_PREFIX, cur, ref_dt)
+        autos_prev = await self._fetch_sales_value_prefix_best(CAT_AUTOS_PREFIX, prev, ref_dt)
 
-        gas_cur = await self._fetch_sales_value_prefix_sum(CAT_GAS_PREFIX, cur, ref_dt)
-        gas_prev = await self._fetch_sales_value_prefix_sum(CAT_GAS_PREFIX, prev, ref_dt)
-
-        core_cur = total_cur - autos_cur - gas_cur
-        core_prev = total_prev - autos_prev - gas_prev
+        core_cur = total_cur - autos_cur
+        core_prev = total_prev - autos_prev
 
         if core_prev == 0:
             raise ZeroDivisionError("Previous core value is zero")
         return (core_cur - core_prev) / core_prev * 100.0
+
+    async def _try_compute_mm_change_total(self, cur: str, prev: str, ref_dt: datetime) -> Optional[float]:
+        try:
+            return await self._compute_mm_change_total(cur, prev, ref_dt)
+        except Exception:
+            return None
+
+    async def _try_compute_core_mm_change(self, cur: str, prev: str, ref_dt: datetime) -> Optional[float]:
+        try:
+            return await self._compute_core_mm_change(cur, prev, ref_dt)
+        except Exception:
+            return None
