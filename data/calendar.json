@@ -7,13 +7,13 @@
     "scheduled_time_et": "2026-01-13T08:30:00-05:00",
     "provider": "BLS",
     "provider_configured": true,
-    "status": "released",
+    "status": "missing",
     "release": {
-      "actual": "0.3%",
+      "actual": null,
       "previous": "0.3%",
       "forecast": null,
       "unit": "%",
-      "updated_at": "2026-01-13T13:54:57.577977-05:00",
+      "updated_at": "2026-01-13T20:11:26.201196-05:00",
       "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "cpi:2026-01-13T08:30:00-05:00"
@@ -26,13 +26,13 @@
     "scheduled_time_et": "2026-01-13T08:30:00-05:00",
     "provider": "BLS",
     "provider_configured": true,
-    "status": "released",
+    "status": "missing",
     "release": {
-      "actual": "2.7%",
+      "actual": null,
       "previous": "2.7%",
       "forecast": null,
       "unit": "%",
-      "updated_at": "2026-01-13T13:54:57.706615-05:00",
+      "updated_at": "2026-01-13T20:11:26.330919-05:00",
       "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "cpi:2026-01-13T08:30:00-05:00"
@@ -45,13 +45,13 @@
     "scheduled_time_et": "2026-01-13T08:30:00-05:00",
     "provider": "BLS",
     "provider_configured": true,
-    "status": "released",
+    "status": "missing",
     "release": {
-      "actual": "0.2%",
+      "actual": null,
       "previous": "0.2%",
       "forecast": null,
       "unit": "%",
-      "updated_at": "2026-01-13T13:54:57.823154-05:00",
+      "updated_at": "2026-01-13T20:11:26.446101-05:00",
       "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "cpi:2026-01-13T08:30:00-05:00"
@@ -67,11 +67,11 @@
     "status": "scheduled",
     "release": {
       "actual": null,
-      "previous": null,
+      "previous": "-0.1%",
       "forecast": null,
-      "unit": null,
-      "updated_at": null,
-      "source_url": null
+      "unit": "%",
+      "updated_at": "2026-01-13T20:11:26.562001-05:00",
+      "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
     },
     "group_key": "ppi:2026-01-14T08:30:00-05:00"
   },
@@ -82,8 +82,27 @@
     "currency": "USD",
     "scheduled_time_et": "2026-01-14T08:30:00-05:00",
     "provider": "BLS",
-    "provider_configured": false,
-    "status": "disabled",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": "-0.1%",
+      "forecast": null,
+      "unit": "%",
+      "updated_at": "2026-01-13T20:11:26.681785-05:00",
+      "source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/"
+    },
+    "group_key": "ppi:2026-01-14T08:30:00-05:00"
+  },
+  {
+    "event_id": "census:retail-sales-m-m:2026-01-14t08:30:00-05:00",
+    "name": "Retail Sales m/m",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-14T08:30:00-05:00",
+    "provider": "CENSUS",
+    "provider_configured": true,
+    "status": "scheduled",
     "release": {
       "actual": null,
       "previous": null,
@@ -92,7 +111,26 @@
       "updated_at": null,
       "source_url": null
     },
-    "group_key": "ppi:2026-01-14T08:30:00-05:00"
+    "group_key": "census:marts:2026-01-14T08:30:00-05:00"
+  },
+  {
+    "event_id": "census:core-retail-sales-m-m:2026-01-14t08:30:00-05:00",
+    "name": "Core Retail Sales m/m",
+    "country": "US",
+    "currency": "USD",
+    "scheduled_time_et": "2026-01-14T08:30:00-05:00",
+    "provider": "CENSUS",
+    "provider_configured": true,
+    "status": "scheduled",
+    "release": {
+      "actual": null,
+      "previous": null,
+      "forecast": null,
+      "unit": null,
+      "updated_at": null,
+      "source_url": null
+    },
+    "group_key": "census:marts:2026-01-14T08:30:00-05:00"
   },
   {
     "event_id": "dol:unemployment-claims:2026-01-15t08:30:00-05:00",

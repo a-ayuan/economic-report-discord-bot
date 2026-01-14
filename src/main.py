@@ -13,7 +13,7 @@ from src.services.calendar_service import CalendarService
 from src.services.release_watcher import ReleaseWatcher
 from src.utils.cache import load_events, save_events
 from src.utils.http import HttpClient
-from src.utils.text import format_week_summary, format_release_line
+from src.utils.text import build_week_embeds, format_release_line
 from src.utils.timeutil import now_et, week_bounds_et
 from src.utils.state import load_state, save_state, cleanup_weekly_state, BotState
 
@@ -78,7 +78,7 @@ async def main() -> None:
         BLSProvider(http=http, tz_name=s.timezone, api_key=s.bls_api_key),
         DOLProvider(http=http, tz_name=s.timezone),
         BEAProvider(http=http, tz_name=s.timezone),
-        CensusProvider(http=http, tz_name=s.timezone),
+        CensusProvider(http=http, tz_name=s.timezone, api_key=s.census_api_key),
         FedProvider(http=http, tz_name=s.timezone),
         PrivateStubProvider(),
     ]
@@ -310,12 +310,9 @@ async def main() -> None:
             past = [e for e in events if effective_start <= e.scheduled_time_et < now]
             upcoming = [e for e in events if now <= e.scheduled_time_et < effective_end]
 
-        msg1 = format_week_summary(past, "This week (already happened)")
-        msg2 = format_week_summary(upcoming, "This week (upcoming)")
-        out = msg1 + "\n\n" + msg2
-        if len(out) > 1800:
-            out = out[:1800] + "\n…"
-        await ctx.send(out)
+        embeds = build_week_embeds(past, upcoming, title_prefix="This week")
+        for emb in embeds:
+            await ctx.send(embed=emb)
 
     @bot.command(name="clean")
     async def clean_cmd(ctx: commands.Context) -> None:

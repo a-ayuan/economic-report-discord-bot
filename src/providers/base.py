@@ -21,3 +21,10 @@ class Provider(ABC):
         If not yet released, keep scheduled.
         """
         raise NotImplementedError
+
+    async def prefill_previous(self, event: EconomicEvent) -> EconomicEvent:
+        """
+        Optional hook. Providers can compute and persist only `release.previous`
+        during calendar refreshes (without fetching `actual`).
+        """
+        return event

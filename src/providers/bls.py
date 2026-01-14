@@ -24,18 +24,25 @@ BLS_API_V2 = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 
 SERIES = {
     # CPI-U (All items)
-    "CPI_ALL_NSA": "CUUR0000SA0",   # NOT seasonally adjusted (U)
-    "CPI_ALL_SA":  "CUSR0000SA0",   # seasonally adjusted (S)
+    "CPI_ALL_NSA": "CUUR0000SA0",  # NOT seasonally adjusted (U)
+    "CPI_ALL_SA": "CUSR0000SA0",  # seasonally adjusted (S)
 
     # CPI-U (All items less food & energy)
     "CPI_CORE_NSA": "CUUR0000SA0L1E",
-    "CPI_CORE_SA":  "CUSR0000SA0L1E",
+    "CPI_CORE_SA": "CUSR0000SA0L1E",
 
-    "PPI_FINAL_DEMAND": "WPUFD4",
+    # PPI (Final demand, seasonally adjusted) -> aligns with headline PPI m/m
+    "PPI_FINAL_DEMAND_SA": "WPSFD4",
+    # "Core PPI" commonly tracked as final demand less foods and energy (seasonally adjusted)
+    "PPI_CORE_FINAL_DEMAND_LESS_FOOD_ENERGY_SA": "WPSFD49104",
+
+    # Employment Situation
     "NFP_PAYROLLS": "CES0000000001",
     "UNEMP_RATE": "LNS14000000",
     "AHE": "CES0500000003",
-    "JOLTS_OPENINGS": None,
+
+    # JOLTS (Job Openings level, SA, total nonfarm, in thousands)
+    "JOLTS_OPENINGS": "JTS000000000000000JOL",
 }
 
 # Accept "08:30 AM", "8:30 a.m. ET", "8:30 AM ET" etc.
@@ -76,6 +83,7 @@ MONTH_MAP = {
     "dec.": 12,
 }
 
+
 def _parse_time(s: str) -> tuple[int, int] | None:
     if not s:
         return None
@@ -93,6 +101,7 @@ def _parse_time(s: str) -> tuple[int, int] | None:
     if ampm == "am" and hh == 12:
         hh = 0
     return hh, mm
+
 
 def _extract_datetimes_from_tables(soup: BeautifulSoup, tz_name: str) -> list[datetime]:
     out: list[datetime] = []
@@ -124,6 +133,7 @@ def _extract_datetimes_from_tables(soup: BeautifulSoup, tz_name: str) -> list[da
             out.append(datetime(year, mon, day, hh, mm, tzinfo=ZoneInfo(tz_name)))
 
     return sorted(set(out))
+
 
 def _extract_datetimes_from_text(soup: BeautifulSoup, tz_name: str) -> list[datetime]:
     text = soup.get_text("\n", strip=True)
@@ -165,9 +175,11 @@ def _extract_datetimes_from_text(soup: BeautifulSoup, tz_name: str) -> list[date
 
     return sorted(set(out))
 
+
 def _extract_schedule_datetimes(soup: BeautifulSoup, tz_name: str) -> list[datetime]:
     dts = _extract_datetimes_from_tables(soup, tz_name)
     return dts if dts else _extract_datetimes_from_text(soup, tz_name)
+
 
 def _add_months(d: date, delta_months: int) -> date:
     y = d.year
@@ -179,6 +191,7 @@ def _add_months(d: date, delta_months: int) -> date:
         y -= 1
         m += 12
     return date(y, m, 1)
+
 
 class BLSProvider(Provider):
     name = "BLS"
@@ -305,7 +318,7 @@ class BLSProvider(Provider):
                                 currency="USD",
                                 scheduled_time_et=scheduled,
                                 provider=self.name,
-                                provider_configured=False,
+                                provider_configured=True,
                                 group_key=group,
                             ),
                         ]
@@ -321,12 +334,59 @@ class BLSProvider(Provider):
                             currency="USD",
                             scheduled_time_et=scheduled,
                             provider=self.name,
-                            provider_configured=False,
+                            provider_configured=True,
                             group_key=group,
                         )
                     )
 
         return sorted(events, key=lambda x: x.scheduled_time_et)
+
+    async def prefill_previous(self, event: EconomicEvent) -> EconomicEvent:
+        if not event.provider_configured:
+            return event
+
+        if getattr(event, "release", None) is None:
+            event.release = ReleaseData(actual=None, previous=None, forecast=None, source_url=None)
+
+        if event.release.previous is not None:
+            return event
+
+        try:
+            if event.name == "CPI m/m":
+                return await self._prefill_pct_previous(event, SERIES["CPI_ALL_SA"], kind="mom")
+
+            if event.name == "CPI y/y":
+                return await self._prefill_pct_previous(event, SERIES["CPI_ALL_NSA"], kind="yoy")
+
+            if event.name == "Core CPI m/m":
+                return await self._prefill_pct_previous(event, SERIES["CPI_CORE_SA"], kind="mom")
+
+            if event.name == "PPI m/m":
+                return await self._prefill_pct_previous(event, SERIES["PPI_FINAL_DEMAND_SA"], kind="mom")
+
+            if event.name == "Core PPI m/m":
+                return await self._prefill_pct_previous(
+                    event,
+                    SERIES["PPI_CORE_FINAL_DEMAND_LESS_FOOD_ENERGY_SA"],
+                    kind="mom",
+                )
+
+            if event.name == "Average Hourly Earnings m/m":
+                return await self._prefill_pct_previous(event, SERIES["AHE"], kind="mom")
+
+            if event.name == "JOLTS Job Openings":
+                return await self._prefill_level_previous(event, SERIES["JOLTS_OPENINGS"], unit="K")
+
+            if event.name == "Unemployment Rate":
+                return await self._prefill_level_previous(event, SERIES["UNEMP_RATE"], unit="%")
+
+            if event.name == "Non-Farm Employment Change":
+                return await self._prefill_change_previous(event, SERIES["NFP_PAYROLLS"], unit="K")
+
+        except Exception as e:
+            log.exception("prefill_previous failed for %s (%s): %s", event.name, event.event_id, e)
+
+        return event
 
     async def fetch_release(self, event: EconomicEvent) -> EconomicEvent:
         if not event.provider_configured:
@@ -346,7 +406,18 @@ class BLSProvider(Provider):
             return await self._fill_pct_change(event, SERIES["CPI_CORE_SA"], kind="mom", forecast=forecast)
 
         if event.name == "PPI m/m":
-            return await self._fill_pct_change(event, SERIES["PPI_FINAL_DEMAND"], kind="mom", forecast=forecast)
+            return await self._fill_pct_change(event, SERIES["PPI_FINAL_DEMAND_SA"], kind="mom", forecast=forecast)
+
+        if event.name == "Core PPI m/m":
+            return await self._fill_pct_change(
+                event,
+                SERIES["PPI_CORE_FINAL_DEMAND_LESS_FOOD_ENERGY_SA"],
+                kind="mom",
+                forecast=forecast,
+            )
+
+        if event.name == "JOLTS Job Openings":
+            return await self._fill_latest(event, SERIES["JOLTS_OPENINGS"], unit="K", forecast=forecast)
 
         if event.name == "Non-Farm Employment Change":
             return await self._fill_level_change(event, SERIES["NFP_PAYROLLS"], unit="K", forecast=forecast)
@@ -450,6 +521,83 @@ class BLSProvider(Provider):
             return end, yoy
         return None
 
+    @staticmethod
+    def _format_value(v: float, unit: str) -> str:
+        if unit == "K":
+            return f"{v:.0f}"
+        if unit == "%":
+            return f"{v:.1f}"
+        return f"{v:.1f}"
+
+    async def _prefill_pct_previous(self, event: EconomicEvent, series_id: str, *, kind: str) -> EconomicEvent:
+        """
+        IMPORTANT: "previous" should be the prior period's change, not the latest change.
+        So we:
+          1) compute latest (end_d),
+          2) compute previous using before=end_d
+        """
+        resp = await self._bls_post(series_id)
+        pts = self._extract_latest_points(resp)
+        month_map = self._points_to_month_map(pts)
+        months = sorted(month_map.keys())
+        if not months:
+            return event
+
+        if kind == "mom":
+            latest = self._find_last_valid_mom(month_map, months)
+            if latest is None:
+                return event
+            end_d, _latest_mom = latest
+
+            prev_calc = self._find_last_valid_mom(month_map, months, before=end_d)
+            prev_val = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
+
+        elif kind == "yoy":
+            latest = self._find_last_valid_yoy(month_map, months)
+            if latest is None:
+                return event
+            end_d, _latest_yoy = latest
+
+            prev_calc = self._find_last_valid_yoy(month_map, months, before=end_d)
+            prev_val = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
+
+        else:
+            return event
+
+        event.release.previous = prev_val
+        event.release.unit = "%"
+        event.release.source_url = BLS_API_V2
+        event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+        return event
+
+    async def _prefill_level_previous(self, event: EconomicEvent, series_id: str, *, unit: str) -> EconomicEvent:
+        resp = await self._bls_post(series_id)
+        pts = self._extract_latest_points(resp)
+        vals = [(d, v) for d, v in pts if v is not None]
+        if not vals:
+            return event
+        cur = vals[-1][1]
+        event.release.previous = self._format_value(cur, unit)
+        event.release.unit = unit
+        event.release.source_url = BLS_API_V2
+        event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+        return event
+
+    async def _prefill_change_previous(self, event: EconomicEvent, series_id: str, *, unit: str) -> EconomicEvent:
+        resp = await self._bls_post(series_id)
+        pts = self._extract_latest_points(resp)
+        vals = [(d, v) for d, v in pts if v is not None]
+        if len(vals) < 2:
+            return event
+        prev = vals[-2][1]
+        cur = vals[-1][1]
+        change = cur - prev
+        event.release.previous = f"{change:.0f}"
+        event.release.unit = unit
+        event.release.source_url = BLS_API_V2
+        event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+        return event
+
     async def _fill_latest(self, event: EconomicEvent, series_id: str, unit: str, forecast: str | None) -> EconomicEvent:
         resp = await self._bls_post(series_id)
         pts = self._extract_latest_points(resp)
@@ -461,14 +609,17 @@ class BLSProvider(Provider):
         cur = vals[-1][1]
 
         event.status = "released"
-        event.release = ReleaseData(
-            actual=f"{cur:.1f}",
-            previous=f"{prev:.1f}",
-            forecast=forecast,
-            unit=unit,
-            updated_at=datetime.now(ZoneInfo(self.tz_name)),
-            source_url=BLS_API_V2,
-        )
+        if getattr(event, "release", None) is None:
+            event.release = ReleaseData(actual=None, previous=None, forecast=None, source_url=None)
+
+        if event.release.previous is None:
+            event.release.previous = self._format_value(prev, unit)
+
+        event.release.actual = self._format_value(cur, unit)
+        event.release.forecast = forecast
+        event.release.unit = unit
+        event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+        event.release.source_url = BLS_API_V2
         return event
 
     async def _fill_pct_change(self, event: EconomicEvent, series_id: str, kind: str, forecast: str | None) -> EconomicEvent:
@@ -479,14 +630,18 @@ class BLSProvider(Provider):
         if not months:
             return event
 
+        if getattr(event, "release", None) is None:
+            event.release = ReleaseData(actual=None, previous=None, forecast=None, source_url=None)
+
         if kind == "mom":
             last = self._find_last_valid_mom(month_map, months)
             if last is None:
                 return event
             end_d, mom = last
 
-            prev_calc = self._find_last_valid_mom(month_map, months, before=end_d)
-            prev_str = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
+            if event.release.previous is None:
+                prev_calc = self._find_last_valid_mom(month_map, months, before=end_d)
+                event.release.previous = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
 
             latest_calendar = months[-1]
             if end_d != latest_calendar:
@@ -498,14 +653,11 @@ class BLSProvider(Provider):
                 )
 
             event.status = "released"
-            event.release = ReleaseData(
-                actual=f"{mom:.1f}%",
-                previous=prev_str,
-                forecast=forecast,
-                unit="%",
-                updated_at=datetime.now(ZoneInfo(self.tz_name)),
-                source_url=BLS_API_V2,
-            )
+            event.release.actual = f"{mom:.1f}%"
+            event.release.forecast = forecast
+            event.release.unit = "%"
+            event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+            event.release.source_url = BLS_API_V2
             return event
 
         if kind == "yoy":
@@ -514,8 +666,9 @@ class BLSProvider(Provider):
                 return event
             end_d, yoy = last
 
-            prev_calc = self._find_last_valid_yoy(month_map, months, before=end_d)
-            prev_str = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
+            if event.release.previous is None:
+                prev_calc = self._find_last_valid_yoy(month_map, months, before=end_d)
+                event.release.previous = f"{prev_calc[1]:.1f}%" if prev_calc is not None else None
 
             latest_calendar = months[-1]
             if end_d != latest_calendar:
@@ -527,14 +680,11 @@ class BLSProvider(Provider):
                 )
 
             event.status = "released"
-            event.release = ReleaseData(
-                actual=f"{yoy:.1f}%",
-                previous=prev_str,
-                forecast=forecast,
-                unit="%",
-                updated_at=datetime.now(ZoneInfo(self.tz_name)),
-                source_url=BLS_API_V2,
-            )
+            event.release.actual = f"{yoy:.1f}%"
+            event.release.forecast = forecast
+            event.release.unit = "%"
+            event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+            event.release.source_url = BLS_API_V2
             return event
 
         return event
@@ -554,12 +704,15 @@ class BLSProvider(Provider):
         prev_change = prev - prevprev
 
         event.status = "released"
-        event.release = ReleaseData(
-            actual=f"{change:.0f}",
-            previous=f"{prev_change:.0f}",
-            forecast=forecast,
-            unit=unit,
-            updated_at=datetime.now(ZoneInfo(self.tz_name)),
-            source_url=BLS_API_V2,
-        )
+        if getattr(event, "release", None) is None:
+            event.release = ReleaseData(actual=None, previous=None, forecast=None, source_url=None)
+
+        if event.release.previous is None:
+            event.release.previous = f"{prev_change:.0f}"
+
+        event.release.actual = f"{change:.0f}"
+        event.release.forecast = forecast
+        event.release.unit = unit
+        event.release.updated_at = datetime.now(ZoneInfo(self.tz_name))
+        event.release.source_url = BLS_API_V2
         return event
